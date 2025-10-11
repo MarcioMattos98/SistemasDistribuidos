@@ -1,116 +1,106 @@
-# cliente_jogo.py
 import turtle
-import time
 import rpyc
 
-# --- Conexão ---
-conn = rpyc.connect('localhost', 18861)
-servico_remoto = conn.root
+HOST = 'localhost' 
+PORTA = 18861
+username = input("Digite seu nome de jogador: ")
 
-meu_id, minha_cor = servico_remoto.conectar()
-print(f"Conectado ao jogo! Meu ID é {meu_id} e minha cor é {minha_cor}")
+try:
+    print(f"\nConectando ao servidor em {HOST}:{PORTA}...")
+    proxy = rpyc.connect(HOST, PORTA)
+    meu_id, meus_dados = proxy.root.registrar_jogador(username)
+    print(f"Conectado com sucesso! ID: {meu_id} | Cor: {meus_dados['color']}\n")
+except Exception as e:
+    print(f"\n[ERRO] Não foi possível conectar ao servidor: {e}")
+    exit()
 
-# --- Configuração da Tela ---
 wn = turtle.Screen()
-wn.title(f"Move Game - Jogador {meu_id}")
+wn.title(f"Jogo Distribuído - Jogador: {username} (ID: {meu_id})")
 wn.bgcolor("green")
-wn.setup(width=800, height=600) # Definindo um tamanho fixo para facilitar
-wn.tracer(0) 
+wn.setup(width=800, height=600)
+wn.tracer(0)
 
-# --- NOVO: Capturando as dimensões da tela ---
 largura_tela = wn.window_width()
 altura_tela = wn.window_height()
 
-# --- Jogador Local ---
-head = turtle.Turtle()
-head.speed(0)
-head.shape("circle")
-head.color(minha_cor)
-head.penup()
-head.goto(0,0)
-head.direction = "stop"
+meu_jogador = turtle.Turtle()
+meu_jogador.speed(0)
+meu_jogador.shape("circle")
+meu_jogador.color(meus_dados['color'])
+meu_jogador.penup()
+meu_jogador.direction = "stop"
 
 outros_jogadores = {}
+ultima_posicao = (0, 0)
 
-# --- Funções de Movimento ---
-def go_up():
-    head.direction = "up"
-def go_down():
-    head.direction = "down"
-def go_left():
-    head.direction = "left"
-def go_right():
-    head.direction = "right"
-def close():
-    wn.bye()
+# Funções de Movimento
+def go_up(): meu_jogador.direction = "up"
+def go_down(): meu_jogador.direction = "down"
+def go_left(): meu_jogador.direction = "left"
+def go_right(): meu_jogador.direction = "right"
 
-# --- FUNÇÃO move() MODIFICADA ---
 def move():
-    # Coordenadas dos limites da tela (metade da altura/largura)
-    limite_y = altura_tela / 2
-    limite_x = largura_tela / 2
-    
-    # Offset para a borda da bolinha (para não passar metade pra fora)
+    global ultima_posicao
+    limite_y, limite_x = altura_tela / 2, largura_tela / 2
     offset_bola = 15
 
-    if head.direction == "up":
-        # Só se move para cima se não tiver atingido a borda superior
-        if head.ycor() < limite_y - offset_bola:
-            y = head.ycor()
-            head.sety(y + 5)
-            
-    if head.direction == "down":
-        # Só se move para baixo se não tiver atingido a borda inferior
-        if head.ycor() > -limite_y + offset_bola:
-            y = head.ycor()
-            head.sety(y - 5)
+    if meu_jogador.direction == "up" and meu_jogador.ycor() < limite_y - offset_bola:
+        meu_jogador.sety(meu_jogador.ycor() + 5)
+    if meu_jogador.direction == "down" and meu_jogador.ycor() > -limite_y - offset_bola:
+        meu_jogador.sety(meu_jogador.ycor() - 5)
+    if meu_jogador.direction == "left" and meu_jogador.xcor() > -limite_x - offset_bola:
+        meu_jogador.setx(meu_jogador.xcor() - 5)
+    if meu_jogador.direction == "right" and meu_jogador.xcor() < limite_x - offset_bola:
+        meu_jogador.setx(meu_jogador.xcor() + 5)
+    
+    posicao_atual = (meu_jogador.xcor(), meu_jogador.ycor())
+    if posicao_atual != ultima_posicao:
+        proxy.root.atualizar_movimento(meu_id, posicao_atual[0], posicao_atual[1])
+        ultima_posicao = posicao_atual
 
-    if head.direction == "left":
-        # Só se move para a esquerda se não tiver atingido a borda esquerda
-        if head.xcor() > -limite_x + offset_bola:
-            x = head.xcor()
-            head.setx(x - 5)
+def on_close():
+    try:
+        proxy.root.desconectar_jogador(meu_id)
+    except EOFError:
+        print("Conexão com o servidor já estava fechada.")
+    finally:
+        wn.bye()
 
-    if head.direction == "right":
-        # Só se move para a direita se não tiver atingido a borda direita
-        if head.xcor() < limite_x - offset_bola:
-            x = head.xcor()
-            head.setx(x + 5)
-
-# --- Controles do Teclado ---
+# Controles
 wn.listen()
 wn.onkeypress(go_up, "w")
 wn.onkeypress(go_down, "s")
 wn.onkeypress(go_left, "a")
 wn.onkeypress(go_right, "d")
-wn.onkeypress(close, "Escape")
+turtle.getcanvas().winfo_toplevel().protocol("WM_DELETE_WINDOW", on_close)
 
-# --- Loop de Jogo ---
+
 def game_loop():
-    wn.update()
     move()
-    x_atual, y_atual = head.xcor(), head.ycor()
-    servico_remoto.atualizar_posicao(meu_id, x_atual, y_atual)
-    
-    estado_jogo = servico_remoto.obter_estado_jogo()
 
-    for player_id, estado in estado_jogo:
-        if player_id == meu_id:
+
+    estado_jogo = proxy.root.obter_estado_jogo()
+    
+    for id_jogador, dados in estado_jogo:
+        if id_jogador == meu_id:
             continue
 
-        if player_id not in outros_jogadores:
-            novo_turtle = turtle.Turtle()
-            novo_turtle.speed(0)
-            novo_turtle.shape("circle")
-            novo_turtle.color(estado['color'])
-            novo_turtle.penup()
-            outros_jogadores[player_id] = novo_turtle
-            print(f"Novo jogador {player_id} entrou na partida!")
+        if id_jogador not in outros_jogadores:
+            novo_jogador = turtle.Turtle()
+            novo_jogador.speed(0)
+            novo_jogador.shape("circle")
+            novo_jogador.color(dados['color'])
+            novo_jogador.penup()
+            outros_jogadores[id_jogador] = novo_jogador 
+            print(f"Novo jogador detectado: {dados['username']} (ID: {id_jogador})")
 
-        outros_jogadores[player_id].goto(estado['x'], estado['y'])
+
+        outros_jogadores[id_jogador].goto(dados['x'], dados['y'])
     
-    wn.ontimer(game_loop, 50)
+    wn.update() 
+    
+    wn.ontimer(game_loop, 50) 
 
-# --- INÍCIO DO PROGRAMA ---
+
 game_loop()
 wn.mainloop()
