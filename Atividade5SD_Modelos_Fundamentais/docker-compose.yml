@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  # Máquina 1
+  servidor-app:
+    build: .             
+    container_name: servidor-app 
+    networks:
+      - sd-rede
+    command: python servidor.py
+
+  # Máquina 2
+  cliente-app:
+    build: .
+    depends_on:
+      - servidor-app     
+    networks:
+      - sd-rede
+    stdin_open: true     
+    tty: true            
+    command: python cliente.py
+
+
+networks:
+  sd-rede:
+    driver: bridge
